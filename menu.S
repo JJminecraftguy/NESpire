@@ -3,7 +3,7 @@
 nes_rom_file_mask:
 	.string	"*.nes.tns"
 title:
-	.string	" NESpire v0.30 -- Menu=start, Esc=quit"
+	.string	" NESpire - press M for key bindings"
 	.align	4
 
 .globl rom_menu
@@ -108,8 +108,7 @@ menu_draw_done:
 menu_waitkey:
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c0, 4
-	mov	lr, pc
-	ldr	pc, [r9, #s_keypad_read_input]
+	bl	kb_read_menu_input
 
 	mov	r1, keypressed
 	mov	keypressed, r0
@@ -131,7 +130,16 @@ menu_waitkey:
 	bne	menu_down
 	tst	r0, #0x100
 	bne	menu_start
+	tst	r0, #0x200
+	bne	menu_keybinds
 	b	menu_waitkey
+
+menu_keybinds:
+	bl	kb_menu
+	bl	clear_screen		@ restore the menu background (border color)
+	mov	keypressed, #0
+	mov	keyrepeat, #0
+	b	menu_redraw
 
 menu_up:
 	teq	cursor, liststart

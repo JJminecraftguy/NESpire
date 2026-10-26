@@ -28,6 +28,9 @@ $(EXE).elf: $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $<
 
+# keybind.c calls asm helpers that rely on r9 (emulator state pointer)
+keybind.o: CFLAGS += -ffixed-r9
+
 .PHONY: clean
 clean:
 	-rm -f *.o $(EXE).elf $(EXE).tns

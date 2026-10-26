@@ -70,6 +70,9 @@ cx:
 	bl	disp_init
 	movs	r0, r0
 	beq	unknown_hardware
+	add	r0, r9, #s_path
+	ldr	r1, [r9, #s_path_filename]
+	bl	kb_init
 	bl	init_interrupts
 	bl	init_keypad
 	bl	toggle_border
@@ -242,7 +245,10 @@ saved_state_cpu_status:
 newframe:
 	str	lr, [sp, #-4]!
 
-	bl	disp_flip
+	@ Only present the frame if it was actually rendered (not frameskipped)
+	ldr	r0, [r9, #s_frameskip_cur]
+	cmp	r0, #0
+	bleq	disp_flip
 
 	ldrb	r0, [r9, #s_message_timer]
 	subs	r0, #1
@@ -257,21 +263,13 @@ newframe:
 	mov	r8, #0
 pause_loop:
 
-#define num_command_keys 10
-	@ Scan keypad
-	ldr	r3, [r9, #s_hw_keypad_invert]
-	mov	r4, #0
-	ldr	r5, =0x900E0010
-	mov	r6, #num_command_keys - 1
-	ldr	r7, [r9, #s_keypad_command_map]
-1:	ldrb	r0, [r7, r6]
-	and	r1, r0, #0x60
-	ldr	r1, [r5, r1, lsr #3]
-	eor	r1, r3, r1, ror r0
-	and	r1, #1
-	orr	r4, r1, lsl r6
-	subs	r6, #1
-	bpl	1b
+@ Command keys are polled by kb_read_commands (keybind.c):
+@ bits 0-9 = emulator commands, bit 10 = open the key binding menu
+	bl	kb_read_commands
+	mov	r4, r0
+	tst	r4, #1 << 10
+	blne	do_keymenu
+	bic	r4, r4, #1 << 10
 
 	ldr	r5, [r9, #s_command_keys_pressed]
 	str	r4, [r9, #s_command_keys_pressed]
@@ -336,6 +334,7 @@ init_keypad_tpad:
 	adr	r1, touchpad_command_map
 	adr	r2, touchpad_read_input
 init_keypad_save:
+	ldr	r2, =kb_read_input
 	str	r1, [r9, #s_keypad_command_map]
 	str	r2, [r9, #s_keypad_read_input]
 	pop	{pc}
@@ -445,6 +444,18 @@ touchpad_read_input:
 
 	mov	r0, r4
 	pop	{r4, pc}
+
+@ Open the key binding menu from inside the frame loop
+do_keymenu:
+	str	lr, [sp, #-4]!
+	bl	kb_menu
+	bl	clear_screen
+	bl	disp_flip
+	mov	r0, #0
+	strb	r0, [r9, #s_frame_timer]      @ don't try to catch up on lost time
+	mov	r4, #0
+	str	r4, [r9, #s_command_keys_pressed]
+	ldr	pc, [sp], #4
 
 frameskip_inc:
 	add	r10, #1

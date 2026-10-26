@@ -33,6 +33,36 @@
 @ W_*, or RMW_* macro is a template for instructions that do read, write, or
 @ read-modify-write operations, respectively, in a particular addressing mode.
 
+@ Read byte at full address in r2 into r0 (clobbers r3). ROM and RAM are
+@ handled inline; everything else goes through the mem_read jump table.
+.macro	READ_FULL
+	cmp	r2, #0x8000
+	bcc	1f
+	mov	r0, r2, lsr #13
+	add	r0, r9, r0, lsl #2
+	ldr	r0, [r0, #s_mem_map]
+	ldrb	r0, [r0, r2]
+	b	2f
+1:	cmp	r2, #0x2000
+	bcs	3f
+	bic	r3, r2, #0x1800
+	ldrb	r0, [r9, r3]
+	b	2f
+3:	bl	mem_read
+2:
+.endm
+
+@ Write r0 to full address in r2 (clobbers r2, r3). RAM handled inline.
+.macro	WRITE_FULL
+	cmp	r2, #0x2000
+	bcs	1f
+	bic	r3, r2, #0x1800
+	strb	r0, [r9, r3]
+	b	2f
+1:	bl	mem_write
+2:
+.endm
+
 .macro	R_Imm op
 	ldrb	r0, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
@@ -107,17 +137,9 @@
 	ldrb	r2, [cpu_pc], #1
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
-	cmp	r3, #0x80
-	bcs	1f
-	bl	mem_read_split
-	b	2f
-1:	mov	r0, r3, lsr #5
-	and	r0, r0, #7
-	add	r0, r9, r0, lsl #2
-	ldr	r0, [r0, #s_mem_map]
 	add	r2, r2, r3, lsl #8
-	ldrb	r0, [r0, r2]
-2:	\op
+	READ_FULL
+	\op
 	NEXT	4
 .endm
 .macro	W_Abs op
@@ -125,16 +147,18 @@
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
 	\op
-	bl	mem_write_split
+	add	r2, r2, r3, lsl #8
+	WRITE_FULL
 	NEXT	4
 .endm
 .macro	RMW_Abs op
 	ldrb	r2, [cpu_pc], #1
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
-	bl	mem_write
+	WRITE_FULL
 	NEXT	6
 .endm
 
@@ -146,15 +170,8 @@
 	tst	r2, #0x100
 	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
 	add	r2, r2, r3, lsl #8
-	cmp	r2, #0x8000
-	bcc	1f
-	mov	r0, r2, lsr #13
-	add	r0, r9, r0, lsl #2
-	ldr	r0, [r0, #s_mem_map]
-	ldrb	r0, [r0, r2]
-	b	2f
-1:	bl	mem_read
-2:	\op
+	READ_FULL
+	\op
 	NEXT	4
 .endm
 .macro	W_Abs_XY index, op
@@ -163,7 +180,8 @@
 	ldrb	r1, [cpu_pc], #1
 	add	r2, r2, \index, lsr #24
 	\op
-	bl	mem_write_split
+	add	r2, r2, r3, lsl #8
+	WRITE_FULL
 	NEXT	5
 .endm
 .macro	RMW_Abs_XY index, op
@@ -171,9 +189,10 @@
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
 	add	r2, r2, \index, lsr #24
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
-	bl	mem_write
+	WRITE_FULL
 	NEXT	7
 .endm
 .macro R_Abs_X op; R_Abs_XY cpu_x, \op; .endm
@@ -190,7 +209,8 @@
 	ldrb	r2, [r9, r3, lsr #24]
 	add	r3, r3, #0x01000000
 	ldrb	r3, [r9, r3, lsr #24]
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
 	NEXT	6
 .endm
@@ -202,7 +222,8 @@
 	ldrb	r2, [r9, r3, lsr #24]
 	add	r3, r3, #0x01000000
 	ldrb	r3, [r9, r3, lsr #24]
-	bl	mem_write_split
+	add	r2, r2, r3, lsl #8
+	WRITE_FULL
 	NEXT	6
 .endm
 .macro	RMW_Ind_X op
@@ -212,9 +233,10 @@
 	ldrb	r2, [r9, r3, lsr #24]
 	add	r3, r3, #0x01000000
 	ldrb	r3, [r9, r3, lsr #24]
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
-	bl	mem_write
+	WRITE_FULL
 	NEXT	8
 .endm
 
@@ -228,7 +250,8 @@
 	add	r2, r2, cpu_y, lsr #24
 	tst	r2, #0x100
 	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
 	NEXT	5
 .endm
@@ -241,7 +264,8 @@
 	and	r3, r3, #0xFF
 	ldrb	r3, [r9, r3]
 	add	r2, r2, cpu_y, lsr #24
-	bl	mem_write_split
+	add	r2, r2, r3, lsl #8
+	WRITE_FULL
 	NEXT	6
 .endm
 .macro	RMW_Ind_Y op
@@ -252,9 +276,10 @@
 	and	r3, r3, #0xFF
 	ldrb	r3, [r9, r3]
 	add	r2, r2, cpu_y, lsr #24
-	bl	mem_read_split
+	add	r2, r2, r3, lsl #8
+	READ_FULL
 	\op
-	bl	mem_write
+	WRITE_FULL
 	NEXT	8
 .endm
 
