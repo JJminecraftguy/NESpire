@@ -145,17 +145,15 @@
 	add	r2, r2, \index, lsr #24
 	tst	r2, #0x100
 	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
-	bic	r2, r2, #0x100
-	cmp	r3, #0x80
-	bcs	1f
-	bl	mem_read_split
-	b	2f
-1:	mov	r0, r3, lsr #5
-	and	r0, r0, #7
+	add	r2, r2, r3, lsl #8
+	cmp	r2, #0x8000
+	bcc	1f
+	mov	r0, r2, lsr #13
 	add	r0, r9, r0, lsl #2
 	ldr	r0, [r0, #s_mem_map]
-	add	r2, r2, r3, lsl #8
 	ldrb	r0, [r0, r2]
+	b	2f
+1:	bl	mem_read
 2:	\op
 	NEXT	4
 .endm

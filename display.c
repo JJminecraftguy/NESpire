@@ -6,19 +6,20 @@
 #define SCREEN_H 240
 #define FB_BYTES (SCREEN_W * SCREEN_H * 2u)   /* 0x25800 */
 
-/* Non-static so ppu.S / menu.S can reference it via "ldr rN, =disp_fb". */
+/* Non-static so ppu.S / menu.S can reference it directly via
+ * "ldr rN, =disp_fb" — avoids the disp_get_fb() call and the
+ * register-clobber bug in display_char_withcolor. */
 uint16_t disp_fb[SCREEN_W * SCREEN_H] __attribute__((aligned(64)));
 
 #define MODEL_REG      (*(volatile uint32_t *)0x900A0000u)
 #define PL111_UPBASE   (*(volatile uint32_t *)0xC0000010u)
+#define CX2_MAGIC_VRAM ((uint16_t *)0xA8000000u)
 
 typedef enum { DISP_CLASSIC, DISP_HWW, DISP_CX2, DISP_NONE } disp_mode_t;
 
-static disp_mode_t  mode = DISP_NONE;
-static uint32_t     saved_upbase;
-static uint16_t    *cx2_target = NULL;   /* PL111_UPBASE target on CX II */
+static disp_mode_t mode = DISP_NONE;
+static uint32_t    saved_upbase;
 
-/* Defined before disp_init so it's visible to it. */
 static void cache_clean_fb(void)
 {
     uint32_t a = (uint32_t)disp_fb, end = a + FB_BYTES;
@@ -31,21 +32,21 @@ int disp_init(void)
 {
     uint32_t id = MODEL_REG;
 
-    /* CX II: whatever PL111_UPBASE points at is the OS display buffer.
-     * The original code wrote there per-scanline and it worked. */
+    /* CX II: ASIC id 0x0202 in low 16 bits */
     if ((id & 0xFFFFu) == 0x0202u) {
-        cx2_target = (uint16_t *)PL111_UPBASE;
-        if (!cx2_target) { mode = DISP_NONE; return 0; }
         mode = DISP_CX2;
         return 1;
     }
 
-    /* CX */
+    /* CX (both 0x101 and 0x1001 seen in the wild) */
     if (id == 0x00000101u || id == 0x10000101u) {
         scr_type_t t = lcd_type();
         if (t == SCR_240x320_565 || t == SCR_240x320_555) {
             /* HW-W+ portrait SPI panel */
-            if (!lcd_init(SCR_320x240_565)) { mode = DISP_NONE; return 0; }
+            if (!lcd_init(SCR_320x240_565)) {
+                mode = DISP_NONE;
+                return 0;
+            }
             mode = DISP_HWW;
         } else {
             /* Classic CX landscape PL111 panel */
@@ -59,25 +60,36 @@ int disp_init(void)
     return 0;
 }
 
+/* CX II: 32-byte-per-iter ldm/stm copy into uncached magic VRAM. */
 static void cx2_flip(void)
 {
-    /* Copy into the real display buffer (PL111_UPBASE's target),
-     * not a hardcoded address. memcpy preserves callee-saved regs
-     * including r9. */
-    memcpy(cx2_target, disp_fb, FB_BYTES);
+    const uint32_t *src = (const uint32_t *)disp_fb;
+    uint32_t       *dst = (uint32_t *)CX2_MAGIC_VRAM;
+    uint32_t words = FB_BYTES / 4u;
+
+    while (words >= 8) {
+        asm volatile(
+            "ldmia %0!, {r3-r10}\n"
+            "stmia %1!, {r3-r10}\n"
+            : "+r"(src), "+r"(dst)
+            :
+            : "r3","r4","r5","r6","r7","r8","r9","r10","memory");
+        words -= 8;
+    }
+    while (words--) *dst++ = *src++;
 }
 
 void disp_flip(void)
 {
     switch (mode) {
         case DISP_CLASSIC:
-            cache_clean_fb();
+            cache_clean_fb();              /* PL111 DMA reads cached SDRAM */
             break;
         case DISP_HWW:
             lcd_blit(disp_fb, SCR_320x240_565);
             break;
         case DISP_CX2:
-            cx2_flip();
+            cx2_flip();                    /* uncached SRAM, no cache maintenance */
             break;
         default:
             break;
