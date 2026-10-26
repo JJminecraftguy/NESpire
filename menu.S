@@ -3,7 +3,7 @@
 nes_rom_file_mask:
 	.string	"*.nes.tns"
 title:
-	.string	" NESpire - press M for key bindings"
+	.string	" NESpire  C=key bindings  M=resume game"
 	.align	4
 
 .globl rom_menu
@@ -73,6 +73,7 @@ no_files:
 	mov	keyrepeat, #0
 
 menu_redraw:
+	bl	fill_whole_white
 	adr	r0, title
 	mov	r1, #0
 	mov	r2, #40
@@ -132,7 +133,17 @@ menu_waitkey:
 	bne	menu_start
 	tst	r0, #0x200
 	bne	menu_keybinds
+	tst	r0, #0x400
+	bne	menu_resume
 	b	menu_waitkey
+
+@ M in the menu: return to the running game (no-op if none was ever started)
+menu_resume:
+	ldrb	r1, [r9, #s_game_loaded]
+	movs	r1, r1
+	beq	menu_waitkey
+	mov	r0, #1
+	pop	{r4-r11, pc}
 
 menu_keybinds:
 	bl	kb_menu
@@ -169,6 +180,35 @@ menu_down:
 	b	menu_redraw
 
 menu_start:
+	ldr	r0, [r9, #s_menu_backup]
+	movs	r0, r0
+	beq	menu_start_load
+	@ Opened from a running game: picking the same ROM just resumes it.
+	ldr	r1, [r9, #s_path_filename]
+	add	r2, r9, #s_path
+	sub	r1, r1, r2
+	add	r0, r0, r1
+	add	r0, r0, #BK_PATH
+	mov	r1, cursor
+menu_same_cmp:
+	ldrb	r2, [r0], #1
+	ldrb	r3, [r1], #1
+	cmp	r2, r3
+	bne	menu_start_diff
+	movs	r2, r2
+	bne	menu_same_cmp
+	mov	r0, #1
+	pop	{r4-r11, pc}
+menu_start_diff:
+	@ Different ROM: clear mapper state before loading it.
+	@ If loading fails and the user backs out, the caller restores from backup.
+	add	r0, r9, #s_mapper_state
+	mov	r1, #0x80
+	mov	r2, #0
+1:	str	r2, [r0], #4
+	subs	r1, r1, #4
+	bne	1b
+menu_start_load:
 	@ Append filename to directory
 	ldr	r0, [r9, #s_path_filename]
 	mov	r1, cursor
@@ -211,6 +251,9 @@ load_success:
 	@ If game has battery-backed save ram, try to load from save file
 	bl	sram_load
 
+	mov	r0, #1
+	strb	r0, [r9, #s_game_loaded]
+	mov	r0, #0
 	pop	{r4-r11, pc}
 
 @ r0 = character
@@ -284,5 +327,19 @@ display_string:
 	cmp	r5, r6
 	bcc	1b
 	pop	{r4-r7, pc}
+fill_whole_white:
+	push	{r4, lr}
+	ldr	r4, =disp_fb
+	ldr	r0, [r9, #s_hw_color]
+	mov	r1, #0x9600              @ 4bpp: 38400 bytes = whole fb
+	cmp	r0, #0
+	lslne	r1, r1, #2               @ 16bpp: 153600 bytes = whole fb
+	mvn	r3, #0                   @ white
+1:	str	r3, [r4], #4
+	subs	r1, r1, #4
+	bne	1b
+	pop	{r4, pc}
+
+	.pool
 font:
 	.incbin	"font.bin"

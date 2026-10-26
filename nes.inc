@@ -92,6 +92,16 @@
 #define s_hw_color              0x0AC4
 #define s_border_color          0x0AC8
 #define s_message_timer         0x0AD0
+#define s_game_loaded          0x0AD4  // nonzero once a ROM has been loaded
+#define s_menu_backup          0x0AD8  // malloc'd backup while the ROM list is open in-game
+
+// Layout of that backup buffer
+#define BK_SRAM                 0x0000  // 2000 bytes: SRAM
+#define BK_PATH                 0x2000  // 0200 bytes: s_path
+#define BK_EXT                  0x2200  // 0004 bytes: s_path_extension
+#define BK_HDR                  0x2204  // 00A0 bytes: s_rom_header .. s_path_filename
+#define BK_SIZE                 0x2300
+#define HDR_SIZE                0x00A0
 
 // ROM data
 #define s_rom_header            0x0AE0

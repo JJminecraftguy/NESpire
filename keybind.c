@@ -105,6 +105,8 @@ static const action_t actions[] = {
     { "Write save file",      1u << 8 },
     { "Fast-forward (hold)",  1u << 9 },
     { "Open key menu",        1u << 10 },
+    { "Game menu / resume",   1u << 11 },
+    { "Reset emulator",       1u << 12 },
     /* ---- ROM list menu (bit values match menu.S) ---- */
     { "List: move up",        0x10 },
     { "List: move down",      0x20 },
@@ -115,9 +117,11 @@ static const action_t actions[] = {
 #define NES_FIRST 0
 #define NES_COUNT 17
 #define EMU_FIRST 17
-#define EMU_COUNT 11            /* 10 commands + "open key menu" (bit 10) */
+#define EMU_COUNT 13
 #define ACT_OPENMENU 27
-#define ACT_LIST_FIRST 28
+#define ACT_GAMEMENU 28
+#define ACT_RESET 29
+#define ACT_LIST_FIRST 30
 #define ACT_LIST_COUNT 4
 
 static uint8_t bind[NACT];
@@ -196,9 +200,9 @@ static void set_defaults(void)
         &KEY_NSPIRE_8, &KEY_NSPIRE_5, &KEY_NSPIRE_4, &KEY_NSPIRE_6,
         &KEY_NSPIRE_MENU,
         &KEY_NSPIRE_PLUS, &KEY_NSPIRE_MINUS, &KEY_NSPIRE_7, &KEY_NSPIRE_9,
-        &KEY_NSPIRE_B, &KEY_NSPIRE_P, &KEY_NSPIRE_Q, &KEY_NSPIRE_R,
+        &KEY_NSPIRE_B, &KEY_NSPIRE_P, &KEY_NSPIRE_Q, &KEY_NSPIRE_I,
         &KEY_NSPIRE_S, &KEY_NSPIRE_MULTIPLY,
-        &KEY_NSPIRE_M,
+        &KEY_NSPIRE_C, &KEY_NSPIRE_M, &KEY_NSPIRE_R,
         &KEY_NSPIRE_UP, &KEY_NSPIRE_DOWN, &KEY_NSPIRE_ESC, &KEY_NSPIRE_MENU,
     };
     for (int i = 0; i < NACT; i++)
@@ -221,7 +225,7 @@ static int  cfg_ok;
 
 #define CFG_MAGIC0 'N'
 #define CFG_MAGIC1 'K'
-#define CFG_VERSION 2
+#define CFG_VERSION 1
 
 void kb_save(void)
 {
@@ -291,7 +295,8 @@ uint32_t kb_read_commands(void)
 }
 
 /* ROM selection menu input.
- * 0x01 = leave, 0x10 = up, 0x20 = down, 0x100 = start, 0x200 = key menu */
+ * 0x01 = leave, 0x10 = up, 0x20 = down, 0x100 = start,
+ * 0x200 = key menu, 0x400 = back to the running game */
 uint32_t kb_read_menu_input(void)
 {
     uint32_t r = 0;
@@ -299,6 +304,7 @@ uint32_t kb_read_menu_input(void)
     for (int i = ACT_LIST_FIRST; i < ACT_LIST_FIRST + ACT_LIST_COUNT; i++)
         if (kdown(bind[i])) r |= actions[i].mask;
     if (kdown(bind[ACT_OPENMENU])) r |= 0x200;
+    if (kdown(bind[ACT_GAMEMENU])) r |= 0x400;
     return r;
 }
 
@@ -329,6 +335,8 @@ static void wait_release(void)
     while (any_key_down()) wait_tick();
 }
 
+void kb_wait_release(void) { wait_release(); }
+
 static void put(char *line, int col, const char *s)
 {
     for (; *s && col < COLS; s++, col++) line[col] = *s;
@@ -340,11 +348,12 @@ static void draw_row(int row, const char *text_line, int reverse)
 }
 
 /* Two pages: 0 = game + emulator keys, 1 = ROM list keys */
-static int page_count(int p) { return p == 0 ? ACT_OPENMENU + 1 : ACT_LIST_COUNT + 1; }
+static int page_count(int p) { return p == 0 ? ACT_RESET + 1 : ACT_LIST_COUNT + 2; }
 static int page_act(int p, int i)
 {
     if (p == 0) return i;
-    return i < ACT_LIST_COUNT ? ACT_LIST_FIRST + i : ACT_OPENMENU;
+    if (i < ACT_LIST_COUNT) return ACT_LIST_FIRST + i;
+    return i == ACT_LIST_COUNT ? ACT_OPENMENU : ACT_GAMEMENU;
 }
 
 static void draw_menu(int page, int sel, int top, int capturing, const char *msg)

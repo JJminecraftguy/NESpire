@@ -77,6 +77,7 @@ cx:
 	bl	init_keypad
 	bl	toggle_border
 	bl	rom_menu
+start_game:
 	bl	clear_screen
 	bl	disp_flip
 
@@ -95,6 +96,8 @@ exit_emulator:
 	ldr	r0, [r9, #s_prg_ptr]
 	swi	e_free
 	ldr	r0, save_state_ptr
+	swi	e_free
+	ldr	r0, [r9, #s_menu_backup]
 	swi	e_free
 	bl	restore_interrupts
 	bl	disp_shutdown
@@ -269,7 +272,9 @@ pause_loop:
 	mov	r4, r0
 	tst	r4, #1 << 10
 	blne	do_keymenu
-	bic	r4, r4, #1 << 10
+	tst	r4, #1 << 11
+	blne	do_gamemenu
+	bic	r4, r4, #(1 << 10) | (1 << 11)
 
 	ldr	r5, [r9, #s_command_keys_pressed]
 	str	r4, [r9, #s_command_keys_pressed]
@@ -284,7 +289,8 @@ pause_loop:
 	tst	r4, #1 << 6;	bne	exit_emulator   @ Q (Quit)
 	tst	r5, #1 << 7;	blne	invert_colors   @ R (Reverse)
 	tst	r5, #1 << 8;	blne	sram_save       @ S (Save SRAM)
-	tst	r4, #1 << 9;	bne	fast_forward    @ *
+	tst	r5, #1 << 12;	blne	do_reset        @ R (Reset emulator)
+	tst	r4, #1 << 9;	bne	fast_forward    @ * (fast-forward)
 
 	@ Keep looping until the frame timer reaches 5/300 (1/60) of a second
 	ldrb	r0, [r9, #s_frame_timer]
@@ -456,6 +462,213 @@ do_keymenu:
 	mov	r4, #0
 	str	r4, [r9, #s_command_keys_pressed]
 	ldr	pc, [sp], #4
+
+@ r0 = dest, r1 = src, r2 = byte count (multiple of 4)
+copy_words:
+1:	ldr	r3, [r1], #4
+	str	r3, [r0], #4
+	subs	r2, r2, #4
+	bne	1b
+	bx	lr
+
+@ r0 = dest, r1 = byte count (multiple of 4)
+zero_words:
+	mov	r2, #0
+1:	str	r2, [r0], #4
+	subs	r1, r1, #4
+	bne	1b
+	bx	lr
+
+@ M pressed during play: open the ROM list without losing the running game.
+@ The running game stays in RAM and is only discarded if a *different* ROM
+@ is picked from the list.
+@
+@ NOTE: BK_EXT (0x2200), BK_HDR (0x2204) and BK_HDR+(prg_ptr-hdr) (0x2218)
+@ all exceed the ARM LDR/STR 12-bit immediate range (4095), and BK_HDR is
+@ also not encodable as an ADD immediate.  Addresses are computed by
+@ combining #0x2200 (encodable) with a small in-range offset.
+do_gamemenu:
+	ldrb	r0, [r9, #s_game_loaded]
+	movs	r0, r0
+	moveq	r4, #0
+	bxeq	lr
+	push	{lr}
+	bl	kb_wait_release
+	mov	r0, #BK_SIZE
+	swi	e_malloc
+	movs	r6, r0
+	beq	gm_done
+	str	r6, [r9, #s_menu_backup]
+
+	@ Backup SRAM: BK_SRAM == 0, so r6 is already the destination.
+	mov	r0, r6
+	add	r1, r9, #s_sram
+	mov	r2, #0x2000
+	bl	copy_words
+
+	@ Backup path: BK_PATH == 0x2000 (encodable as ADD immediate).
+	add	r0, r6, #0x2000
+	add	r1, r9, #s_path
+	mov	r2, #0x200
+	bl	copy_words
+
+	@ Backup s_path_extension: BK_EXT == 0x2200.
+	add	r0, r6, #0x2200
+	ldr	r1, [r9, #s_path_extension]
+	str	r1, [r0]
+
+	@ Backup s_rom_header..s_path_filename: BK_HDR == 0x2204 = 0x2200 + 4.
+	add	r0, r6, #0x2200
+	add	r0, r0, #4
+	add	r1, r9, #s_rom_header
+	mov	r2, #HDR_SIZE
+	bl	copy_words
+
+	mvn	r5, #0				@ r5 < 0: don't auto-load a ROM
+	bl	rom_menu
+	movs	r7, r0				@ 1 = resume current game, 0 = new ROM was loaded
+	beq	gm_new_game
+
+	@ ---- Resume the running game ----
+	add	r0, r9, #s_sram
+	mov	r1, r6
+	mov	r2, #0x2000
+	bl	copy_words
+
+	add	r0, r9, #s_path
+	add	r1, r6, #0x2000
+	mov	r2, #0x200
+	bl	copy_words
+
+	add	r0, r6, #0x2200
+	ldr	r0, [r0]
+	str	r0, [r9, #s_path_extension]
+
+	add	r0, r9, #s_rom_header
+	add	r1, r6, #0x2200
+	add	r1, r1, #4
+	mov	r2, #HDR_SIZE
+	bl	copy_words
+
+	mov	r0, r6
+	swi	e_free
+	mov	r0, #0
+	str	r0, [r9, #s_menu_backup]
+	bl	kb_wait_release
+	bl	clear_screen
+	bl	disp_flip
+
+do_reset:
+	ldrb	r0, [r9, #s_game_loaded]
+	movs	r0, r0
+	bxeq	lr			@ no game loaded, no-op
+
+	@ Free the current ROM and save-state buffers
+	ldr	r0, [r9, #s_prg_ptr]
+	swi	e_free
+	mov	r0, #0
+	str	r0, [r9, #s_prg_ptr]
+
+	ldr	r0, save_state_ptr
+	swi	e_free
+	mov	r0, #0
+	str	r0, save_state_ptr
+
+	ldr	r0, [r9, #s_path_extension]
+	adr	r1, reset_rom_ext
+	swi	e_strcpy
+
+	add	r0, r9, #s_path
+	bl	load_rom
+	movs	r0, r0
+	bne	exit_emulator
+
+	bl	sram_load
+
+	mov	r0, r9
+	mov	r1, #0x800
+	bl	zero_words
+	add	r0, r9, #0x800
+	add	r0, r0, #0x24
+	mov	r1, #0x5C
+	bl	zero_words
+	add	r0, r9, #0x8C0
+	mov	r1, #0x140
+	bl	zero_words
+	add	r0, r9, #s_spr_loc_table
+	mov	r1, #0x1800
+	add	r1, r1, #0x70
+	bl	zero_words
+
+	mov	r0, #0
+	str	r0, [r9, #s_frameskip_cur]
+	strb	r0, [r9, #s_spr_loc_table_valid]
+	strb	r0, [r9, #s_palette_cache_valid]
+	strb	r0, [r9, #s_message_timer]
+	strb	r0, [r9, #s_frame_timer]
+	str	r0, [r9, #s_command_keys_pressed]
+
+	bl	kb_wait_release
+
+	mov	sp, r9
+	b	start_game
+
+reset_rom_ext:
+	.string	"nes.tns"
+	.align	4
+
+gm_done:
+	mov	r0, #0
+	strb	r0, [r9, #s_frame_timer]		@ don't catch up on menu time
+	mov	r4, #0
+	pop	{pc}
+
+	@ ---- A different ROM was loaded: discard the old game ----
+gm_new_game:
+	@ s_prg_ptr lives at BK_HDR + (s_prg_ptr - s_rom_header) = 0x2204 + 0x14 = 0x2218.
+	add	r0, r6, #0x2200
+	ldr	r0, [r0, #0x18]
+	swi	e_free				@ old PRG+CHR buffer
+
+	ldr	r0, save_state_ptr
+	swi	e_free				@ old save state
+	mov	r0, #0
+	str	r0, save_state_ptr
+
+	mov	r0, r6
+	swi	e_free				@ backup buffer
+	mov	r0, #0
+	str	r0, [r9, #s_menu_backup]
+
+	@ Wipe emulated machine state (load_rom already reinstalled memory maps)
+	mov	r0, r9				@ 0000-07FF: NES RAM
+	mov	r1, #0x800
+	bl	zero_words
+
+	add	r0, r9, #0x800			@ 0824-087F: flags, interrupts, input
+	add	r0, r0, #0x24
+	mov	r1, #0x5C
+	bl	zero_words
+
+	add	r0, r9, #0x8C0			@ 08C0-09FF: palette, PPU regs, OAM
+	mov	r1, #0x140
+	bl	zero_words
+
+	add	r0, r9, #s_spr_loc_table		@ 0B90-23FF: sprite table + name tables
+	mov	r1, #0x1800
+	add	r1, r1, #0x70
+	bl	zero_words
+
+	mov	r0, #0
+	str	r0, [r9, #s_frameskip_cur]
+	strb	r0, [r9, #s_spr_loc_table_valid]
+	strb	r0, [r9, #s_palette_cache_valid]
+	strb	r0, [r9, #s_message_timer]
+	strb	r0, [r9, #s_frame_timer]
+	str	r0, [r9, #s_command_keys_pressed]
+	bl	kb_wait_release
+	mov	sp, r9				@ abandon the old call stack
+	b	start_game
 
 frameskip_inc:
 	add	r10, #1
