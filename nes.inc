@@ -3,20 +3,20 @@
 #ifdef DEBUG
 #define TRACE bl trace
 .macro	ERROR	code
-	bkpt	#\code
+bkpt	#\code
 .endm
 .macro	CERROR	cond, code
-	b\cond	.+8
-	b	.+8
-	bkpt	#\code
+b\cond	.+8
+b	.+8
+bkpt	#\code
 .endm
 #else
 #define TRACE
 .macro	ERROR	code
-	b	exit_emulator
+b	exit_emulator
 .endm
 .macro	CERROR	cond, code
-	b\cond	exit_emulator
+b\cond	exit_emulator
 .endm
 #endif
 
@@ -68,6 +68,8 @@
 #define s_ppu_address           0x08EC          // $2006
 #define s_ppu_data              0x08F0          // $2007 buffer
 #define s_ppu_scanline          0x08F4
+#define s_ppu_bus               0x08F8  // PPU open bus value
+#define s_cpu_bus               0x08F9  // CPU data bus (last operand high byte)
 #define s_ppu_oam_ram           0x0900  // 0100 bytes - must be 256-byte aligned
 
 // Emulation data (no relation to anything in an actual NES)
@@ -92,8 +94,18 @@
 #define s_hw_color              0x0AC4
 #define s_border_color          0x0AC8
 #define s_message_timer         0x0AD0
-#define s_game_loaded          0x0AD4  // nonzero once a ROM has been loaded
-#define s_menu_backup          0x0AD8  // malloc'd backup while the ROM list is open in-game
+#define s_apu_frame_irq         0x0B10
+#define s_apu_frame_inhibit     0x0B11
+#define s_apu_frame_mode        0x0B12
+#define s_dmc_ctrl              0x0B13
+#define s_dmc_length            0x0B14
+#define s_dmc_countdown         0x0B18
+#define s_dmc_irq               0x0B1C
+#define s_apu_length            0x0B20  // 4 bytes: length counter per channel
+#define s_apu_halt              0x0B24  // bits 0-3: halt for p1/p2/tri/noi
+#define s_apu_enable            0x0B25  // bits 0-3: enable for p1/p2/tri/noi
+#define s_game_loaded           0x0AD4
+#define s_menu_backup           0x0AD8
 
 // Layout of that backup buffer
 #define BK_SRAM                 0x0000  // 2000 bytes: SRAM

@@ -19,9 +19,38 @@ ppu_next_scanline:
 	orr	r10, r10, #0x800000
 	and	r2, r10, #0x80   @ NMI enabled?
 	strb	r2, [r9, #s_nmi_reset]
+	@ APU frame IRQ at vblank if enabled
+	ldrb	r2, [r9, #s_apu_frame_mode]
+	cmp	r2, #0
+	bne	1f                     @ 5-step mode, no IRQ
+	ldrb	r2, [r9, #s_apu_frame_inhibit]
+	cmp	r2, #0
+	bne	1f                     @ inhibited
+	mov	r2, #1
+	strb	r2, [r9, #s_apu_frame_irq]
+	strb	r2, [r9, #s_irq_from_apu]
 1:
 
 	str	r0, [r9, #s_ppu_scanline]
+
+	@ DMC countdown: decrement per scanline, fire IRQ when exhausted
+	ldr	r2, [r9, #s_dmc_countdown]
+	cmp	r2, #0
+	beq	100f
+	cmp	r2, #328
+	blt	101f
+	sub	r2, r2, #328
+	str	r2, [r9, #s_dmc_countdown]
+	b	100f
+101:	mov	r2, #1
+	strb	r2, [r9, #s_dmc_irq]
+	strb	r2, [r9, #s_irq_from_apu]
+	mov	r2, #0
+	str	r2, [r9, #s_dmc_countdown]
+100:
+	@ APU tick DISABLED for diagnostic
+	push	{r0}
+	pop	{r0}
 
 	cmp	r0, #240
 	bcs	rendering_off

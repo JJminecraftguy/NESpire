@@ -5,8 +5,9 @@
 @ - Code is assumed to be contiguous in memory (apparently "The Magic of
 @   Scheherazade" violates this by having code cross from bank 3 to bank 7,
 @   but it's not worth it to kill performance just for one obscure game)
-@ - Extra memory accesses (in read-modify-write instructions,
-@   or indexing carry) are not implemented
+@ - Extra memory accesses: page-cross dummy reads are implemented for
+@   LDA/STA $xx,X and LDA/STA ($xx),Y. RMW double-writes are implemented
+@   for $2000+ targets. RAM RMW uses a single write (no observable effect).
 
 .equ	NES_FLAG_C, 0x01
 .equ	NES_FLAG_Z, 0x02
@@ -137,6 +138,7 @@
 	ldrb	r2, [cpu_pc], #1
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
+	strb	r3, [r9, #s_cpu_bus]
 	add	r2, r2, r3, lsl #8
 	READ_FULL
 	\op
@@ -157,21 +159,48 @@
 	ldrb	r1, [cpu_pc], #1
 	add	r2, r2, r3, lsl #8
 	READ_FULL
+	cmp	r2, #0x2000
+	bcs	99f
+	@ RAM target: single write is sufficient (no observable side effects)
 	\op
 	WRITE_FULL
-	NEXT	6
+	b	98f
+99:	@ Non-RAM target: hardware writes twice (old, then new)
+	push	{r0, r2}
+	\op
+	push	{r0}
+	ldr	r2, [sp, #8]
+	ldr	r0, [sp, #4]
+	WRITE_FULL
+	pop	{r0}
+	ldr	r2, [sp, #4]
+	add	sp, sp, #8
+	WRITE_FULL
+98:	NEXT	6
 .endm
 
 .macro	R_Abs_XY index, op
 	ldrb	r2, [cpu_pc], #1
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
+	strb	r3, [r9, #s_cpu_bus]
 	add	r2, r2, \index, lsr #24
 	tst	r2, #0x100
-	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	bne	99f
+	@ --- fast path: no page cross, no dummy read ---
 	add	r2, r2, r3, lsl #8
 	READ_FULL
-	\op
+	b	98f
+99:	@ --- page cross: dummy read at pre-carry address, then real read ---
+	sub	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	push	{r2, r3}
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8		@ r2 = pre-carry address
+	READ_FULL				@ dummy (side effects only)
+	pop	{r2, r3}
+	add	r2, r2, r3, lsl #8		@ r2 = real address
+	READ_FULL
+98:	\op
 	NEXT	4
 .endm
 .macro	W_Abs_XY index, op
@@ -179,8 +208,13 @@
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
 	add	r2, r2, \index, lsr #24
-	\op
-	add	r2, r2, r3, lsl #8
+	push	{r2, r3}
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8		@ r2 = pre-carry address
+	READ_FULL				@ dummy read (always, per AccuracyCoin test 4)
+	pop	{r2, r3}
+	\op					@ r0 = value to store
+	add	r2, r2, r3, lsl #8		@ r2 = real address
 	WRITE_FULL
 	NEXT	5
 .endm
@@ -191,9 +225,22 @@
 	add	r2, r2, \index, lsr #24
 	add	r2, r2, r3, lsl #8
 	READ_FULL
+	cmp	r2, #0x2000
+	bcs	99f
 	\op
 	WRITE_FULL
-	NEXT	7
+	b	98f
+99:	push	{r0, r2}
+	\op
+	push	{r0}
+	ldr	r2, [sp, #8]
+	ldr	r0, [sp, #4]
+	WRITE_FULL
+	pop	{r0}
+	ldr	r2, [sp, #4]
+	add	sp, sp, #8
+	WRITE_FULL
+98:	NEXT	7
 .endm
 .macro R_Abs_X op; R_Abs_XY cpu_x, \op; .endm
 .macro R_Abs_Y op; R_Abs_XY cpu_y, \op; .endm
@@ -235,9 +282,22 @@
 	ldrb	r3, [r9, r3, lsr #24]
 	add	r2, r2, r3, lsl #8
 	READ_FULL
+	cmp	r2, #0x2000
+	bcs	99f
 	\op
 	WRITE_FULL
-	NEXT	8
+	b	98f
+99:	push	{r0, r2}
+	\op
+	push	{r0}
+	ldr	r2, [sp, #8]
+	ldr	r0, [sp, #4]
+	WRITE_FULL
+	pop	{r0}
+	ldr	r2, [sp, #4]
+	add	sp, sp, #8
+	WRITE_FULL
+98:	NEXT	8
 .endm
 
 .macro	R_Ind_Y op
@@ -249,22 +309,44 @@
 	ldrb	r3, [r9, r3]
 	add	r2, r2, cpu_y, lsr #24
 	tst	r2, #0x100
-	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	bne	99f
+	@ --- fast path: no page cross, no dummy read ---
 	add	r2, r2, r3, lsl #8
 	READ_FULL
-	\op
+	b	98f
+99:	@ --- page cross: dummy read at pre-carry address, then real read ---
+	sub	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	push	{r2, r3}
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8		@ r2 = pre-carry address
+	READ_FULL				@ dummy (side effects only)
+	pop	{r2, r3}
+	add	r2, r2, r3, lsl #8		@ r2 = real address
+	READ_FULL
+98:	\op
 	NEXT	5
 .endm
+
 .macro	W_Ind_Y op
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
-	\op
 	ldrb	r2, [r9, r3]
 	add	r3, r3, #1
 	and	r3, r3, #0xFF
 	ldrb	r3, [r9, r3]
 	add	r2, r2, cpu_y, lsr #24
-	add	r2, r2, r3, lsl #8
+	tst	r2, #0x100
+	bne	99f
+	@ --- fast path: no page cross, no dummy read ---
+	b	98f
+99:	@ --- page cross: dummy read at pre-carry address, then real write ---
+	push	{r2, r3}
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8		@ r2 = pre-carry address
+	READ_FULL				@ dummy (side effects only)
+	pop	{r2, r3}
+98:	\op					@ r0 = value to store
+	add	r2, r2, r3, lsl #8		@ r2 = real address
 	WRITE_FULL
 	NEXT	6
 .endm
@@ -278,9 +360,22 @@
 	add	r2, r2, cpu_y, lsr #24
 	add	r2, r2, r3, lsl #8
 	READ_FULL
+	cmp	r2, #0x2000
+	bcs	99f
 	\op
 	WRITE_FULL
-	NEXT	8
+	b	98f
+99:	push	{r0, r2}
+	\op
+	push	{r0}
+	ldr	r2, [sp, #8]
+	ldr	r0, [sp, #4]
+	WRITE_FULL
+	pop	{r0}
+	ldr	r2, [sp, #4]
+	add	sp, sp, #8
+	WRITE_FULL
+98:	NEXT	8
 .endm
 
 @ Read operations
@@ -407,7 +502,7 @@
 .endm
 .macro	OP_LAS
 	and	r0, cpu_sp, r0
-	mov	cpu_sp, r0
+	orr	cpu_sp, r0, #0x100
 	bic	cpu_flags, cpu_flags, #ARM_FLAG_N | ARM_FLAG_Z
 	movs	cpu_a, r0, lsl #24
 	orrmi	cpu_flags, cpu_flags, #ARM_FLAG_N
@@ -603,10 +698,42 @@ take_branch:
 		ldrb	r1, [cpu_pc], #1
 		\op	cpu_flags, cpu_flags, #ARM_FLAG_\flag
 	.else
-		ldr	r0, [r9, #s_flags_di]
-		ldrb	r1, [cpu_pc], #1
-		\op	r0, r0, #NES_FLAG_\flag
-		str	r0, [r9, #s_flags_di]
+		.ifc \flag, I
+			@ CLI/SEI: real hardware polls IRQ at end of CLI. Do the same
+			@ so an IRQ pending at CLI time fires before the next instruction.
+			ldr	r0, [r9, #s_flags_di]
+			ldrb	r1, [cpu_pc], #1
+			\op	r0, r0, #NES_FLAG_I
+			str	r0, [r9, #s_flags_di]
+			tst	r0, #NES_FLAG_I
+			bne	1f
+			ldr	r2, [r9, #s_interrupts]
+			tst	r2, #0xFF000000        @ NMI pending -> skip IRQ (NMI has priority)
+			bne	1f
+			tst	r2, #0xFF              @ APU IRQ?
+			tsteq	r2, #0xFF00            @ or mapper IRQ?
+			beq	1f
+			sub	cpu_pc, cpu_pc, #1     @ undo fetch of next opcode
+			bl	push_pc
+			mov	r2, #0x20              @ IRQ: B clear, bit 5 set
+			bl	push_flags
+			ldr	r0, [r9, #s_flags_di]
+			ldr	r2, [r9, #s_mem_map + 28]
+			orr	r0, r0, #NES_FLAG_I
+			str	r0, [r9, #s_flags_di]
+			add	r2, r2, #0x10000
+			ldrh	r2, [r2, #0xFFFE - 0x10000]
+			bl	mem_jump
+			subs	cpu_cycles, cpu_cycles, #27    @ 2 (CLI) + 7 (IRQ)
+			addpl	pc, cpu_itable, r1, lsl #2
+			b	cpu_leave
+1:
+		.else
+			ldr	r0, [r9, #s_flags_di]
+			ldrb	r1, [cpu_pc], #1
+			\op	r0, r0, #NES_FLAG_\flag
+			str	r0, [r9, #s_flags_di]
+		.endif
 	.endif
 	NEXT	2
 .endm
@@ -665,7 +792,13 @@ main_loop:
 
 cpu_enter:
 	ldrb	r1, [cpu_pc], #1
-	TRACE
+	ldr	r0, [r9, #s_pc_base]
+	sub	r0, cpu_pc, r0
+	cmp	r0, #0x10000
+	bne	1f
+	mov	r2, #0
+	bl	remap_pc
+1:	TRACE
 	add	pc, cpu_itable, r1, lsl #2
 cpu_leave:
 	sub	cpu_pc, cpu_pc, #1
@@ -1011,57 +1144,194 @@ insn_fd: R(SBC, Abs_X)
 insn_fe: RMW(INC, Abs_X)
 insn_ff: RMW(ISC, Abs_X)
 
-@ No-ops
-insn_1c: @ NOP Abs_X
-insn_3c: @ NOP Abs_X
-insn_5c: @ NOP Abs_X
-insn_7c: @ NOP Abs_X
-insn_dc: @ NOP Abs_X
-insn_fc: @ NOP Abs_X
-	ldrb	r2, [cpu_pc]
+@ No-ops. Every NOP that has an operand address does a real dummy read
+@ from that address on hardware (updates s_cpu_bus, clears PPU vblank,
+@ ticks APU status, etc.). The 1-byte implied NOPs do nothing but a fetch.
+insn_1c: @ NOP Abs,X
+insn_3c:
+insn_5c:
+insn_7c:
+insn_dc:
+insn_fc:
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	strb	r3, [r9, #s_cpu_bus]
 	add	r2, r2, cpu_x, lsr #24
 	tst	r2, #0x100
-	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
-insn_0c: @ NOP Abs
-	add	cpu_pc, cpu_pc, #1
+	bne	91f
+	add	r2, r2, r3, lsl #8
+	READ_FULL
+	NEXT	4
+91:	sub	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	push	{r2, r3}
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	READ_FULL
+	pop	{r2, r3}
+	add	r2, r2, r3, lsl #8
+	READ_FULL
+	NEXT	4
+
+insn_0c: @ NOP Absolute
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	strb	r3, [r9, #s_cpu_bus]
+	add	r2, r2, r3, lsl #8
+	READ_FULL
+	NEXT	4
+
 insn_14: @ NOP Zp,X
-insn_34: @ NOP Zp,X
-insn_54: @ NOP Zp,X
-insn_74: @ NOP Zp,X
-insn_d4: @ NOP Zp,X
-insn_f4: @ NOP Zp,X
-	sub	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+insn_34:
+insn_54:
+insn_74:
+insn_d4:
+insn_f4:
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	add	r2, cpu_x, r2, lsl #24
+	ldrb	r3, [r9, r2, lsr #24]
+	strb	r3, [r9, #s_cpu_bus]
+	NEXT	4
+
 insn_04: @ NOP Zp
-insn_44: @ NOP Zp
-insn_64: @ NOP Zp
-	sub	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
-insn_80: @ NOP Imm
-insn_82: @ NOP Imm
-insn_89: @ NOP Imm
-insn_c2: @ NOP Imm
-insn_e2: @ NOP Imm
+insn_44:
+insn_64:
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	ldrb	r3, [r9, r2]
+	strb	r3, [r9, #s_cpu_bus]
+	NEXT	3
+
+insn_80: @ NOP Immediate
+insn_82:
+insn_89:
+insn_c2:
+insn_e2:
 	add	cpu_pc, cpu_pc, #1
-insn_1a: @ NOP
-insn_3a: @ NOP
-insn_5a: @ NOP
-insn_7a: @ NOP
-insn_da: @ NOP
-insn_ea: @ NOP (official)
-insn_fa: @ NOP
+	ldrb	r1, [cpu_pc], #1
+	NEXT	2
+
+insn_1a: @ NOP Implied
+insn_3a:
+insn_5a:
+insn_7a:
+insn_da:
+insn_ea:
+insn_fa:
 	ldrb	r1, [cpu_pc], #1
 	NEXT	2
 
 @ undocumented Opcodes with unstable functionality (not implemented)
-insn_93: @ AHX Ind_Y
-	add	cpu_pc, cpu_pc, #1
+insn_93: @ SHA (zp),Y
+	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
+	ldrb	r2, [r9, r3]
+	add	r3, r3, #1
+	and	r3, r3, #0xFF
+	ldrb	r3, [r9, r3]
+	add	r2, r2, cpu_y, lsr #24
+	add	r0, r3, #1
+	and	r0, r0, #0xFF
+	and	r0, r0, cpu_a, lsr #24
+	and	r0, r0, cpu_x, lsr #24
+	push	{r0}
+	mov	r0, r2, lsr #8
+	add	r3, r3, r0
+	and	r3, r3, #0xFF
+	and	r3, r3, cpu_a, lsr #24
+	and	r3, r3, cpu_x, lsr #24
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	pop	{r0}
+	strb	r0, [r9, #s_cpu_bus]
+	WRITE_FULL
 	NEXT	6
-insn_9b: @ TAS Abs_Y
-insn_9c: @ SHY Abs_X
-insn_9e: @ SHX Abs_Y
-insn_9f: @ AHX Abs_Y
-	add	cpu_pc, cpu_pc, #2
+
+insn_9f: @ SHA abs,Y
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
+	add	r2, r2, cpu_y, lsr #24
+	add	r0, r3, #1
+	and	r0, r0, #0xFF
+	and	r0, r0, cpu_a, lsr #24
+	and	r0, r0, cpu_x, lsr #24
+	push	{r0}
+	mov	r0, r2, lsr #8
+	add	r3, r3, r0
+	and	r3, r3, #0xFF
+	and	r3, r3, cpu_a, lsr #24
+	and	r3, r3, cpu_x, lsr #24
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	pop	{r0}
+	strb	r0, [r9, #s_cpu_bus]
+	WRITE_FULL
+	NEXT	5
+
+insn_9c: @ SHY abs,X
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	add	r2, r2, cpu_x, lsr #24
+	add	r0, r3, #1
+	and	r0, r0, #0xFF
+	and	r0, r0, cpu_y, lsr #24
+	push	{r0}
+	mov	r0, r2, lsr #8
+	add	r3, r3, r0
+	and	r3, r3, #0xFF
+	and	r3, r3, cpu_y, lsr #24
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	pop	{r0}
+	strb	r0, [r9, #s_cpu_bus]
+	WRITE_FULL
+	NEXT	5
+
+insn_9e: @ SHX abs,Y
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	add	r2, r2, cpu_y, lsr #24
+	add	r0, r3, #1
+	and	r0, r0, #0xFF
+	and	r0, r0, cpu_x, lsr #24
+	push	{r0}
+	mov	r0, r2, lsr #8
+	add	r3, r3, r0
+	and	r3, r3, #0xFF
+	and	r3, r3, cpu_x, lsr #24
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	pop	{r0}
+	strb	r0, [r9, #s_cpu_bus]
+	WRITE_FULL
+	NEXT	5
+
+insn_9b: @ SHS abs,Y
+	ldrb	r2, [cpu_pc], #1
+	ldrb	r3, [cpu_pc], #1
+	ldrb	r1, [cpu_pc], #1
+	and	r0, cpu_a, cpu_x
+	mov	r0, r0, lsr #24
+	orr	cpu_sp, r0, #0x100
+	add	r2, r2, cpu_y, lsr #24
+	add	r0, r3, #1
+	and	r0, r0, #0xFF
+	and	r0, r0, cpu_sp
+	push	{r0}
+	mov	r0, r2, lsr #8
+	add	r3, r3, r0
+	and	r3, r3, #0xFF
+	and	r3, r3, cpu_sp
+	and	r2, r2, #0xFF
+	orr	r2, r2, r3, lsl #8
+	pop	{r0}
+	strb	r0, [r9, #s_cpu_bus]
+	WRITE_FULL
 	NEXT	5
 
 @ Opcodes that hang the CPU

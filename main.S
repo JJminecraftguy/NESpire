@@ -118,7 +118,7 @@ init_interrupts:
 	mov	r2, #1 << 19
 	str	r2, [r0]
 
-	@ Set the IRQ vector 
+	@ Set the IRQ vector
 	mov	r1, #0xA4000000
 	ldr	r2, [r1, #0x38]
 	str	r2, [r9, #s_saved_irq_handler]
@@ -247,6 +247,31 @@ saved_state_cpu_status:
 .globl newframe
 newframe:
 	str	lr, [sp, #-4]!
+
+	@ Length counter tick: 4 rounds × 4 channels per frame = 240 Hz
+	mov	r4, #4
+tick_round:
+	mov	r0, #0
+tick_channel:
+	mov	r1, #1
+	mov	r1, r1, lsl r0
+	ldrb	r2, [r9, #s_apu_enable]
+	tst	r2, r1
+	beq	tick_next
+	ldrb	r2, [r9, #s_apu_halt]
+	tst	r2, r1
+	bne	tick_next
+	add	r3, r9, #s_apu_length
+	ldrb	r2, [r3, r0]
+	cmp	r2, #0
+	subne	r2, r2, #1
+	strneb	r2, [r3, r0]
+tick_next:
+	add	r0, r0, #1
+	cmp	r0, #4
+	bne	tick_channel
+	subs	r4, r4, #1
+	bne	tick_round
 
 	@ Only present the frame if it was actually rendered (not frameskipped)
 	ldr	r0, [r9, #s_frameskip_cur]
@@ -557,6 +582,7 @@ do_gamemenu:
 	bl	kb_wait_release
 	bl	clear_screen
 	bl	disp_flip
+	b	gm_done                 @ ← add this line
 
 do_reset:
 	ldrb	r0, [r9, #s_game_loaded]
@@ -598,6 +624,11 @@ do_reset:
 	add	r0, r9, #s_spr_loc_table
 	mov	r1, #0x1800
 	add	r1, r1, #0x70
+	bl	zero_words
+
+	add	r0, r9, #0x0B10
+	add	r0, r0, #0x03
+	mov	r1, #24
 	bl	zero_words
 
 	mov	r0, #0

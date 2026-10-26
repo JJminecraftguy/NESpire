@@ -158,16 +158,16 @@ static int key_down(const t_key *k)
         /* Corners of the touchpad count as both neighbouring directions,
          * like the original NESpire touchpad code did. */
         switch (k->tpad_arrow) {
-        case TPAD_ARROW_UP:
-            return a == TPAD_ARROW_UP || a == TPAD_ARROW_UPRIGHT || a == TPAD_ARROW_LEFTUP;
-        case TPAD_ARROW_DOWN:
-            return a == TPAD_ARROW_DOWN || a == TPAD_ARROW_RIGHTDOWN || a == TPAD_ARROW_DOWNLEFT;
-        case TPAD_ARROW_LEFT:
-            return a == TPAD_ARROW_LEFT || a == TPAD_ARROW_DOWNLEFT || a == TPAD_ARROW_LEFTUP;
-        case TPAD_ARROW_RIGHT:
-            return a == TPAD_ARROW_RIGHT || a == TPAD_ARROW_UPRIGHT || a == TPAD_ARROW_RIGHTDOWN;
-        default:
-            return a == (int)k->tpad_arrow;
+            case TPAD_ARROW_UP:
+                return a == TPAD_ARROW_UP || a == TPAD_ARROW_UPRIGHT || a == TPAD_ARROW_LEFTUP;
+            case TPAD_ARROW_DOWN:
+                return a == TPAD_ARROW_DOWN || a == TPAD_ARROW_RIGHTDOWN || a == TPAD_ARROW_DOWNLEFT;
+            case TPAD_ARROW_LEFT:
+                return a == TPAD_ARROW_LEFT || a == TPAD_ARROW_DOWNLEFT || a == TPAD_ARROW_LEFTUP;
+            case TPAD_ARROW_RIGHT:
+                return a == TPAD_ARROW_RIGHT || a == TPAD_ARROW_UPRIGHT || a == TPAD_ARROW_RIGHTDOWN;
+            default:
+                return a == (int)k->tpad_arrow;
         }
     }
     int row = g_touch ? k->tpad_row : k->row;
@@ -182,7 +182,7 @@ static int key_index(const t_key *k)
 {
     for (int i = 0; i < NKEYS; i++)
         if (keys[i].key == k) return i;
-    return 0;
+        return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -252,7 +252,7 @@ static void kb_load(void)
         return;
     for (int i = 0; i < NACT; i++)
         if (buf[4 + i] >= NKEYS) return;
-    for (int i = 0; i < NACT; i++) bind[i] = buf[4 + i];
+        for (int i = 0; i < NACT; i++) bind[i] = buf[4 + i];
 }
 
 /* folder = start of path buffer, fname = pointer just past the folder part */
@@ -282,7 +282,7 @@ uint32_t kb_read_input(void)
     tp_valid = 0;
     for (int i = NES_FIRST; i < NES_FIRST + NES_COUNT; i++)
         if (kdown(bind[i])) r |= actions[i].mask;
-    return r;
+        return r;
 }
 
 uint32_t kb_read_commands(void)
@@ -291,7 +291,7 @@ uint32_t kb_read_commands(void)
     tp_valid = 0;
     for (int i = EMU_FIRST; i < EMU_FIRST + EMU_COUNT; i++)
         if (kdown(bind[i])) r |= actions[i].mask;
-    return r;
+        return r;
 }
 
 /* ROM selection menu input.
@@ -303,9 +303,9 @@ uint32_t kb_read_menu_input(void)
     tp_valid = 0;
     for (int i = ACT_LIST_FIRST; i < ACT_LIST_FIRST + ACT_LIST_COUNT; i++)
         if (kdown(bind[i])) r |= actions[i].mask;
-    if (kdown(bind[ACT_OPENMENU])) r |= 0x200;
-    if (kdown(bind[ACT_GAMEMENU])) r |= 0x400;
-    return r;
+        if (kdown(bind[ACT_OPENMENU])) r |= 0x200;
+        if (kdown(bind[ACT_GAMEMENU])) r |= 0x400;
+        return r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -327,7 +327,7 @@ static int any_key_down(void)
     tp_valid = 0;
     for (int i = 0; i < NKEYS; i++)
         if (key_exists(keys[i].key) && kdown(i)) return 1;
-    return 0;
+        return 0;
 }
 
 static void wait_release(void)
@@ -475,7 +475,7 @@ void kb_menu(void)
             uint8_t d = default_of(a);
             for (int j = 0; j < NACT; j++)
                 if (j != a && bind[j] == d) bind[j] = bind[a];  /* swap */
-            bind[a] = d;
+                    bind[a] = d;
             changed = 1;
             msg = "Reset to default";
         }
@@ -486,7 +486,7 @@ void kb_menu(void)
                 int swapped = -1;
                 for (int j = 0; j < NACT; j++)
                     if (j != a && bind[j] == k) { swapped = j; bind[j] = bind[a]; }
-                bind[a] = (uint8_t)k;
+                    bind[a] = (uint8_t)k;
                 changed = 1;
                 if (swapped >= 0) {
                     int n = 0;
