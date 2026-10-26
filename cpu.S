@@ -107,8 +107,17 @@
 	ldrb	r2, [cpu_pc], #1
 	ldrb	r3, [cpu_pc], #1
 	ldrb	r1, [cpu_pc], #1
+	cmp	r3, #0x80
+	bcs	1f
 	bl	mem_read_split
-	\op
+	b	2f
+1:	mov	r0, r3, lsr #5
+	and	r0, r0, #7
+	add	r0, r9, r0, lsl #2
+	ldr	r0, [r0, #s_mem_map]
+	add	r2, r2, r3, lsl #8
+	ldrb	r0, [r0, r2]
+2:	\op
 	NEXT	4
 .endm
 .macro	W_Abs op
@@ -136,8 +145,18 @@
 	add	r2, r2, \index, lsr #24
 	tst	r2, #0x100
 	subne	cpu_cycles, cpu_cycles, #CPU_CYCLE_LENGTH
+	bic	r2, r2, #0x100
+	cmp	r3, #0x80
+	bcs	1f
 	bl	mem_read_split
-	\op
+	b	2f
+1:	mov	r0, r3, lsr #5
+	and	r0, r0, #7
+	add	r0, r9, r0, lsl #2
+	ldr	r0, [r0, #s_mem_map]
+	add	r2, r2, r3, lsl #8
+	ldrb	r0, [r0, r2]
+2:	\op
 	NEXT	4
 .endm
 .macro	W_Abs_XY index, op

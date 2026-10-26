@@ -228,8 +228,7 @@ no_sprites:
 	addcc	sp, #256
 	bcc	draw_done
 
-	mov	r4, #0xC0000000
-	ldr	r4, [r4, #0x10]
+	ldr	r4, =disp_fb
 	add	r5, r9, #s_palette_cache
 
 	ldr	r0, [r9, #s_hw_color]
@@ -574,9 +573,8 @@ toggle_border:
 	str	r0, [r9, #s_border_color]
 .globl clear_screen
 clear_screen:
+	ldr	r0, =disp_fb
 	ldr	r1, [r9, #s_border_color]
-	mov	r0, #0xC0000000
-	ldr	r0, [r0, #0x10]
 	ldr	r2, [r9, #s_hw_color]
 	movs	r2, r2
 	mov	r2, #0x9600
@@ -586,12 +584,17 @@ clear_screen:
 	bne	1b
 	bx	lr
 
+	.pool
+
 .globl display_ingame_message
 display_ingame_message:
+	push	{lr}
 	mov	r1, #60
 	strb	r1, [r9, #s_message_timer]
 	mov	r1, #4
 	mov	r2, #36
 	ldr	r3, [r9, #s_border_color]
 	mvn	r3, r3
-	b	display_string
+	bl	display_string
+	bl	disp_flip
+	pop	{pc}

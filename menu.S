@@ -103,6 +103,7 @@ menu_next_row:
 	bne	menu_next_row
 menu_draw_done:
 	ldr	r10, [sp], #4
+	bl	disp_flip
 
 menu_waitkey:
 	mov	r0, #0
@@ -186,6 +187,7 @@ menu_start:
 	mov	r2, #7
 	mov	r3, #-1
 	bl	display_string
+	bl	disp_flip
 	b	menu_waitkey
 error_hdr:
 	.string	"ERROR:"
@@ -210,8 +212,7 @@ display_char:
 @ r2 = color (0 = normal, -1 = reverse)
 display_char_withcolor:
 	push	{r4, lr}
-	mov	r12, #0xC0000000
-	ldr	r12, [r12, #0x10]
+	ldr	r12, =disp_fb
 	adr	r4, font
 	add	r4, r0, lsl #4
 	mov	r3, #0x10
@@ -250,6 +251,9 @@ display_char_16bpp:
 	subs	r3, #1
 	bne	2b
 	pop	{r4, pc}
+
+	.pool                                    @ ← NEW: literal pool for disp_fb
+
 @ r0 = string
 @ r1 = start position
 @ r2 = end position

@@ -67,11 +67,15 @@ cx:
 	str	r3, [r9, #s_hw_color]
 	str	r4, [r9, #s_frameskip]
 
+	bl	disp_init
+	movs	r0, r0
+	beq	unknown_hardware
 	bl	init_interrupts
 	bl	init_keypad
 	bl	toggle_border
 	bl	rom_menu
 	bl	clear_screen
+	bl	disp_flip
 
 	@ Set CPU to power-on state
 	mov	cpu_a, #0
@@ -90,6 +94,7 @@ exit_emulator:
 	ldr	r0, save_state_ptr
 	swi	e_free
 	bl	restore_interrupts
+	bl	disp_shutdown
 unknown_hardware:
 	ldr	sp, [r9, #s_saved_sp]
 	pop	{r4-r11, pc}
@@ -236,6 +241,8 @@ saved_state_cpu_status:
 .globl newframe
 newframe:
 	str	lr, [sp, #-4]!
+
+	bl	disp_flip
 
 	ldrb	r0, [r9, #s_message_timer]
 	subs	r0, #1

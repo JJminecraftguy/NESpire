@@ -1,20 +1,32 @@
-AS = nspire-as
-LD = $(shell nspire-tools _toolchainpath)/arm-none-eabi-ld
+# Makefile for NESpire on TI-Nspire CX / CX II
+AS      = nspire-as
+CC      = nspire-gcc
+LD = nspire-ld
 GENZEHN = genzehn
 
-OBJS = $(patsubst %.S, %.o, $(shell find . -name \*.S))
+OBJS = $(patsubst %.S, %.o, $(shell find . -name \*.S)) \
+       $(patsubst %.c, %.o, $(shell find . -name \*.c))
 EXE = nespire
+
+ASFLAGS = -mcpu=arm926ej-s -mtune=arm926ej-s -marm
+CFLAGS  = -O3 -mcpu=arm926ej-s -mtune=arm926ej-s -marm -fno-tree-vectorize \
+          -ffreestanding -fno-builtin
+LDFLAGS = -Wl,--gc-sections
 
 all: $(EXE).tns
 
 $(EXE).tns: $(EXE).elf
-	$(GENZEHN) --input $^ --output $@ --compress
+	$(GENZEHN) --input $^ --output $@ --compress \
+	           --240x320-support true --uses-lcd-blit true
 
 $(EXE).elf: $(OBJS)
-	$(LD) --pic-veneer --emit-relocs -T $(shell nspire-tools path)/system/ldscript -e main $^ -o $@
+	$(LD) $^ -o $@
 
 %.o: %.S nes.inc
-	$(AS) -c $<
+	$(AS) $(ASFLAGS) -c $<
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $<
 
 .PHONY: clean
 clean:
