@@ -513,21 +513,16 @@ mem_write_4017:
 	movne	r3, #1
 	moveq	r3, #0
 	strb	r3, [r9, #s_apu_frame_inhibit]
-	@ If inhibit set, clear pending frame IRQ (documented HW behavior)
-	tst	r0, #0x40
-	movne	r2, #0
-	strneb	r2, [r9, #s_apu_frame_irq]
 	tst	r0, #0x80
 	movne	r3, #1
 	moveq	r3, #0
 	strb	r3, [r9, #s_apu_frame_mode]
-	@ irq_from_apu = (frame_irq && !inhibit) || dmc_irq
 	ldrb	r3, [r9, #s_apu_frame_irq]
-	ldrb	r2, [r9, #s_apu_frame_inhibit]
-	cmp	r2, #0
+	cmp	r3, #0
+	ldrneb	r3, [r9, #s_apu_frame_inhibit]
+	cmpne	r3, #0
+	moveq	r3, #1
 	movne	r3, #0
-	ldrb	r2, [r9, #s_dmc_irq]
-	orr	r3, r3, r2
 	strb	r3, [r9, #s_irq_from_apu]
 	tst	r0, #0x80
 	bxeq	lr
@@ -580,10 +575,8 @@ mem_write_6000_to_7FFF:
 	bxeq	lr
 mem_write_4020_to_5FFF:
 	str	lr, [sp, #-4]!
-	ldr	lr, =return_from_mapper
+	adr	lr, return_from_mapper
 	ldr	pc, [r9, #s_mapper_write_lo]
-
-	.pool
 
 mem_jump_split:
 	add	r2, r2, r3, lsl #8
